@@ -1,0 +1,268 @@
+---
+title: "Mobile App For Lottery Addiction"
+output: html_notebook
+---
+
+## Context 
+Many people start playing the lottery for fun, but for some, this activity can escalate into habit and addiction. They start to accumulate debts and eventually resort to more desperate behaviors like theft, deceiving to family, or worse. As a part of a medical institute, We are assigned to assist in the development of a mobile app intended to guide lottery addicts through exercises that will let them better estimate their chances of winning. The hope is that this app will help them realize that buying too many tickets will do little to improve their chances of winning.
+
+For the first version of the app, they want us to focus on the 6/49 lottery and build functions that can answer users questions like:
+
+    What is the probability of winning the big prize with a single ticket?
+    What is the probability of winning the big prize if we play 40 different tickets (or any other number)?
+    What is the probability of having at least five (or four, or three, or two) winning numbers on a single ticket?
+    
+The institute also wants us to consider historical data coming from the national 6/49 lottery game in Canada.
+
+```{r}
+library(tidyverse)
+lottery649 <- read_csv("649.csv")
+head(lottery649)
+```
+
+
+
+## Making Core Functions 
+
+we'll need to calculate repeatedly probabilities and combinations, so wrapping it in a function will save us a lot of time. We'll start by writing two functions:
+
+    A function that calculates factorials and
+    A function that calculates the numbers of combinations.
+
+```{r}
+factorial <- function(n) {
+  product = 1
+  for (i in 1:n) {
+    product = product * i
+  }
+  return(product)
+}
+combinations <- function(n, k) {
+  numerator <- factorial(n)
+  denominator <- factorial(k) * factorial(n - k)
+  return(numerator / denominator)
+}
+```
+
+
+## One Ticket Probability
+
+We will create another function to calculate the probability of winning the big prize.
+
+In the 6/49 lottery, six numbers are drawn from a set of 49 numbers that range from 1 to 49. A player wins the big prize **if the six numbers on their tickets match all the six numbers drawn.** If a player has a ticket with the numbers {13, 22, 24, 27, 42, 44}, he only wins the big prize if the numbers drawn are {13, 22, 24, 27, 42, 44}. **Even if just one number differs, they won't win.**
+
+For the first version of the app, we want players to be able to calculate the probability of winning the big prize with the various numbers they play on a **single ticket** (for each ticket a player chooses six numbers out of 49).
+
+**Important** : The player will choose a number without replacement. Means, after choosing a number, s/he cannot put it back on the set. So we have to calculate the function accordingly. Permutation is not appropriate in this case because, the order of the numbers wont matter. So we will use the combination function that we've made. 
+
+```{r}
+one_ticket_probability <- function(nums){
+  total_combinations <- combinations(49, 6)
+  prob <- (1 / total_combinations) * 100 #because The user inputs just one combination, which means the number of successful outcomes is 1.
+  pretty_prob <- sprintf("%1.9f", prob) #1.9 is just a format to show percetages. check documentation
+  s <- paste("You have a ", pretty_prob, "% chance of winning the big prize.", sep = "")
+  return(s)
+}
+
+one_ticket_probability(c(1,2,3,4,5,6))
+
+```
+
+
+## Historical Data Check For Canada Lottery
+
+For the first version of the app, however, users should also be able to compare their ticket against past winning combinations in the historical lottery data in Canada. Having this functionality will allow users to determine whether they would have ever won by now.
+
+For each drawing, we can find the six numbers drawn in the six columns: `Number Drawn 1` to `Number Drawn 6`
+
+```{r}
+print(dim(lottery649))
+head(lottery649, 3)
+tail(lottery649, 3)
+```
+
+
+## A new Data Structure
+
+we'll learn the **pmap** function. While map allows us to iterate over just one vector (or column) with a function, pmap allow us to use multiple vectors simultaneously in the function. We are talking about this because, we have six numbers in six different columns in the data set.
+
+Like map, pmap takes two inputs: the first is some data, and the second is a function that we want to use to process the data. In pmap, the data needs to be passed in as a list.
+
+# Some practice on pmap 
+
+```{r}
+data1 <- c(1, 3, 5)
+data2 <- c(2, 4, 6)
+data3 <- c(8, 9, 7)
+## Answer
+unnamed_list <- list(data1, data2, data3)
+first_vector <- unnamed_list[[1]]
+named_list <-list(first = data1, second = data2, third = data3)
+first_item_sum <- named_list$data1[1] + named_list$data2[1] + named_list$data3[1]
+
+first_item_sum
+```
+
+## Using Pmap
+
+We will use the concept if anonymous function here in pmap. Example : 
+data1 <- c(1, 3, 5)
+data2 <- c(2, 4, 6)
+data3 <- c(8, 9, 7)
+
+data_list <- list(data1, data2, data3)
+
+sums <- pmap(data_list, function(x, y, z) { x + y + z })
+
+
+we gave pmap the two inputs it expects: a list of vectors and a function. pmap starts by taking the first item in each of the vectors of the list, data1, data2, data3. These first items then become the inputs to the anonymous function. The first item in data1 is used as the x input, the first item from data2 is used as y, and finally the first item from data3 is used as z. Then, these items are summed up, as described in the anonymous function. After the sum is calculated, it is stored and then the process is repeated on the second items from each vector, and so on. pmap does not return a single vector, but rather another list!
+
+**Since the output is also a list, we can reference data from it in the same ways we do for a list **
+
+
+**Task** :
+
+    Using the same data above, use the pmap function to create a new list that contains the average of the items in the current iteration. Assign this list to averages.
+        For example, the first item of this new list should contain the average of the first items of each vector.
+    Convert averages back into a vector, and assign the first item of it to the variable first_average.
+
+```{r}
+data1 <- c(1, 3, 5)
+data2 <- c(2, 4, 6)
+data3 <- c(8, 9, 7)
+data_list <- list(data1, data2, data3)
+## Answer
+averages <- pmap(data_list, function(x, y, z, w) { (x + y + z ) /3 }) # Taking the data list as an input and taking rows in a list as arguments of the function, returning the output of the function implemented on each column. 
+first_average <- unlist(averages)
+
+averages
+
+
+```
+
+## Function For Historical Data Check 
+
+we're going to write a function that will enable users to compare their ticket against the historical lottery data in Canada and determine whether they would have ever won by now. Inside the app, the user inputs six different numbers from 1 to 49. We will write a function that prints:
+the number of times the combination selected occurred in the Canada data set and
+the probability of winning the big prize in the next drawing with that combination.
+
+```{r}
+#Extract all the winning six numbers from the historical data set into an R vector.
+
+historical_lots <- pmap(
+  list(
+    u <- lottery649$`NUMBER DRAWN 1`,
+    v <- lottery649$`NUMBER DRAWN 2`,
+    w <- lottery649$`NUMBER DRAWN 3`,
+    x <- lottery649$`NUMBER DRAWN 4`,
+    y <- lottery649$`NUMBER DRAWN 5`,
+    z <- lottery649$`NUMBER DRAWN 6`
+  ), 
+  .f <- function(u, v, w, x, y, z) { c(u, v, w, x, y, z) } # combining the rows in a vector.
+  )
+head(historical_lots) 
+```
+
+```{r}
+# Writing a function named check_historical_occurence() that takes in two inputs: an R vector containing the user numbers and the list containing the sets of the winning numbers from part 1. 
+
+# Compare the numbers given by the user against the list you created. If the user numbers match the winning lot, then return TRUE. If not, return FALSE. The end result of the comparison should be a vector of Boolean values. 
+
+library(sets)
+check_historical_occurrences <- function(lot, hist_lots = historical_lots) {
+  historical_matches <- map(hist_lots, function(x) {setequal(x, lot)}) # each hist_lots vector is represented by x. 
+  num_past_matches <- sum(unlist(historical_matches)) # number of TRUE values 
+  s <- paste("The combination you entered has appeared ", 
+             num_past_matches, 
+             " times in the past. ",
+             "Your chance of winning the big prize in the next drawing using this combination is 0.0000072%", sep = "") # 0.0000072 % was measured with "one_ticket_probability" function previously. Here, as the user will input a single number, no matter what combination of numbers, will always have .000072% chance because the number of combination is "1". 
+  return(s)
+}
+```
+
+That was a heck of a function. Lets test 
+
+```{r}
+# Try 3, 11, 12, 14, 41, 43, and 13. This is the first row in the data set, so the function should be able to detect it.
+
+test_1 <- check_historical_occurrences(c(3, 11, 12, 14, 41, 43))
+
+# another check with 6 consecutive numbers, which is very unlikely to happen to be drawn, so it should return false.
+
+test_2 <- check_historical_occurrences(c(1,2,3,4,5,6))
+
+test_1
+test_2
+
+```
+
+So its working. 
+
+## Multi Ticket probablity
+
+So far, we've written two main functions for the app:
+
+    one_ticket_probability() — calculates the probability of winning the big prize with a single ticket
+    check_historical_occurrence() — checks whether a certain combination has occurred in the Canada lottery data set
+
+One situation our functions do not cover is the issue of multiple tickets. Lottery addicts usually play more than one ticket on a single drawing. 
+
+we're going to write a function that will allow the users to calculate the chances of winning for any number of different tickets.Our function will see an integer between 1 and 13,983,816 (the maximum number of different tickets). The function should print information about the probability of winning the big prize depending on the number of different tickets played.
+
+```{r}
+multi_ticket_probability <- function(n) {
+  total_combinations <- combinations(49, 6)
+  prob <- (n / total_combinations) * 100
+  pretty_prob <- sprintf("%1.9f", prob)
+  s <- paste("you have a ", pretty_prob, "% chance of winning the big prize.", sep = "")
+  return(s)
+}
+```
+
+Lets test it with number of different tickets. 
+
+```{r}
+test_amounts <- c(1, 10, 100, 10000, 1000000, 6991908, 13983816)
+for (n in test_amounts) {
+  print(paste("For ", n, " tickets, ",  multi_ticket_probability(n), sep = ""))
+}
+```
+
+Everything is numbers. If we know how many combinations are possible, we know how much we have to buy to get close to win. In math, the huge task of counting the number of combinations has been reduced by creating the appropriate formula or should I say a **model** ? 
+
+## Less Winning Numbers - Function 
+
+we're going to write one more function to allow the users to calculate probabilities for three, four, or five winning numbers. Means, if someone doesnt get lucky to have all six numbers matched, whats the chance to win a smaller prize instead ?
+
+we will write a function which takes in an integer and prints information about the chances of winning depending on the value of that integer.
+
+```{r}
+probability_less_6 <- function(n) {
+  
+    n_combinations_ticket = combinations(6, n) # number of possible combinations of n numbers in 6 numbers situation
+     n_combinations_remaining = combinations(49 - n, 6 - n) # number of possible combinations left in the set. 
+     successful_outcomes = n_combinations_ticket * n_combinations_remaining #remember the venn diagram, here we are figuring out the number of successful outcomes given the number of mathces of the user. 
+     n_combinations_total = combinations(49, 6) # total combinations with 6 numbers 
+     
+     prob = (successful_outcomes / n_combinations_total) * 100 # So the chance that the user numbers belong in the 6 number combinations. 
+     pretty_prob <- sprintf("%1.9f", prob)
+     
+     s <- paste("you have a ", pretty_prob, "% chance of winning the big prize.", sep = "")
+  return(s)
+}
+
+```
+
+**Test** 
+
+```{r}
+winning_nums <- c(3, 4, 5)
+for (n in winning_nums) {
+  print(paste("For ", n, " mathing numbers, ",  probability_less_6(n), sep = ""))
+}
+```
+
+
+## Conclusion 
+
+We have made all the functions that will help one user to test his/her chance of winning. Here, it is worth to note that calculating with granularity and iterating over it to find flaws is the way to go to make a good working model. 
