@@ -1,0 +1,367 @@
+---
+title: "Answering Business Questions Through SQL"
+author: Mahmood Hossain Farsim  
+output:
+  html_document:
+    df_print: paged
+editor_options:
+  chunk_output_type: inline
+---
+
+## Importing Libraries 
+
+```{r}
+library(DBI)
+library(RSQLite)
+
+```
+
+## Making Helper Functions
+
+
+
+```{r}
+db <- 'chinook.db'
+run_query <- function(q){
+  conn <- dbConnect(SQLite(),db)
+  result <- dbGetQuery(conn,q)
+  dbDisconnect(conn)
+  return(result)
+}
+
+
+show_tables <- function(){
+  q <- "SELECT
+    name,
+    type
+FROM sqlite_master
+WHERE type IN ('table','view');"
+  return (run_query(q))
+}
+```
+
+## Running the Show_tables Function 
+
+```{r}
+show_tables()
+```
+
+
+```
+So the purpose so far was to see what is inside the database "chinook.db". The above steps show the tables inside the database. 
+
+## Selecting Albums To Purchase 
+
+Now, Chinook has signed with a new record label. We have to choose 3 albums from 4. For that, we need to find out which three albums would be the greatest fit for Chinook. From our database, We have to find which genres sell most in the USA and make data visualizations. We're trying to establish comparisons between genres, so the best visualizations will allow a user to instantly see differences between them.
+
+
+```
+```{r}
+albums_to_purchase <- '
+WITH usa_tracks_sold AS
+   (
+    SELECT il.* FROM invoice_line il
+    INNER JOIN invoice i on il.invoice_id = i.invoice_id
+    INNER JOIN customer c on i.customer_id = c.customer_id
+    WHERE c.country = "USA"
+   )
+SELECT
+    g.name AS genre,
+    count(uts.invoice_line_id) AS tracks_sold,
+    cast(count(uts.invoice_line_id) AS FLOAT) / (
+        SELECT COUNT(*) from usa_tracks_sold
+    ) AS percentage_sold
+FROM usa_tracks_sold uts
+INNER JOIN track AS t on t.track_id = uts.track_id
+INNER JOIN genre g on g.genre_id = t.genre_id
+GROUP BY 1
+ORDER BY 2 DESC
+LIMIT 10;
+'
+
+   
+```
+
+
+
+
+
+```{r}
+run_query(albums_to_purchase)
+```
+
+
+SO we got the answer that which genre sales most. Now its time to visualize . 
+
+
+```{r}
+library(ggplot2)
+
+genre_sales <- run_query(albums_to_purchase)
+ggplot(data = genre_sales, aes(x = reorder(genre,-percentage_sold),
+                               y = percentage_sold)) +
+                               geom_bar(color = "yellow",fill = "red",stat = 'identity')
+```
+
+Now lets go back to our research question/objective where we wanted to identify the possible best choice from 4 albums to keep in the record store. our choices were ;
+
+Regal 	Hip-Hop
+Red Tone 	Punk
+Meteor and the Girls 	Pop
+Slim Jim Bites 	Blues
+
+Among the genres represented in our list of 4 albums, punk, blues and pop are the highest rated. Therefore, we should recommend:
+
+- Red Tone (Punk)
+- Slim Jim Bites (Blues)
+- Meteor and the Girls (Pop)
+
+Rock is the  best sold genre by far. Can we ask the record label if they have any rock albums coming out ?
+
+## Next : Best agent 
+
+Each customer for the Chinook store gets assigned to a sales support agent within the company when they first make a purchase. You have been asked to analyze the purchases of customers belonging to each employee to see if any sales support agent is performing either better or worse than the others.
+
+For this,we need to extract a table that basically shows the **employee name** and ***total sales** columns. 
+
+This is basically our query 
+
+**SELECT
+  ....AS employee_name
+  ....AS total_sales**
+
+
+```{r}
+employees_sales_performance <- '
+WITH customer_support_rep_sales AS
+  (
+  SELECT 
+    i.customer_id,
+    c.support_rep_id,
+    SUM(i.total) AS total
+  
+  FROM invoice AS i
+  INNER JOIN customer AS c on i.customer_id = c.customer_id
+  GROUP BY 1,2
+  )
+  
+
+SELECT
+  e.first_name ||" "||e.last_name AS employee_name,
+  e.hire_date,
+  SUM(csrs.total) AS total_sales
+  
+FROM customer_support_rep_sales AS csrs
+INNER JOIN employee AS e ON e.employee_id = csrs.support_rep_id
+GROUP BY 1;
+  
+'
+```
+
+Now that we have our query ready, lets run it (extract the dara from database chinook.db)
+
+```{r}
+run_query(employees_sales_performance)
+
+```
+
+It shows that Jane Peacock has the highest amount of sales but she has been working in the store for longer period of time than the others. To really find out the best seller profile, we need to find how much a particular sales person sells in a given time. 
+
+Anyways, lets visualize the data 
+
+```{r}
+employee_sales = run_query(employees_sales_performance)
+ggplot(data = employee_sales, aes(x = reorder(employee_name, -total_sales), 
+                               y = total_sales)) +
+  geom_bar(stat = "identity")
+```
+
+
+## Analyzing Sales By Country
+
+
+Alright, now we will analyze **sales by country** . I will better write down the questions here .
+
+Write a query that collates data on purchases from different countries. For each country, include:
+
+    total number of customers
+    total value of sales
+    average value of sales per customer
+    average order value
+Where a country has only one customer, collect them into an "Other" group.
+
+The results should be sorted by the total sales from highest to lowest, with the "Other" group at the very bottom.
+
+```{r}
+sales_by_country = '
+WITH country_or_other AS
+    (
+     SELECT
+       CASE
+           WHEN (
+                 SELECT count(*)
+                 FROM customer
+                 where country = c.country
+                ) = 1 THEN "Other"
+           ELSE c.country
+       END AS country,
+       c.customer_id,
+       il.*
+     FROM invoice_line il
+     INNER JOIN invoice i ON i.invoice_id = il.invoice_id
+     INNER JOIN customer c ON c.customer_id = i.customer_id
+    )
+SELECT
+    country,
+    customers,
+    total_sales,
+    average_order,
+    customer_lifetime_value
+FROM
+    (
+    SELECT
+        country,
+        count(distinct customer_id) customers,
+        SUM(unit_price) total_sales,
+        SUM(unit_price) / count(distinct customer_id) customer_lifetime_value,
+        SUM(unit_price) / count(distinct invoice_id) average_order,
+        CASE
+            WHEN country = "Other" THEN 1
+            ELSE 0
+        END AS sort
+    FROM country_or_other
+    GROUP BY country
+    ORDER BY sort ASC, total_sales DESC
+    );
+'
+
+```
+
+Okay, that was a long query. Not that I understood all of that but its just a drop out of an ocean so stay on focus. Dont let go . HOLD ON. Lot lot to explore. 
+
+Lets run this query to find our answers to the questions above 
+
+```{r}
+run_query(sales_by_country)
+```
+
+Lets visualize the data. Its nothing but seeing the country/customer, country/avg order, country/lifetime value relationships.
+
+```{r}
+country_metrics = run_query(sales_by_country)
+ggplot(data = country_metrics, aes(x = reorder(country, -total_sales), 
+                                   y = total_sales, 
+                                   fill = country)) +
+  geom_bar(stat = "identity") +
+  labs(
+    title = "Total sales by country",
+    x = "Country",
+    y = "Total Sales"
+  ) + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+ggplot(data = country_metrics, aes(x = reorder(country, -customers), 
+                                   y = customers, 
+                                   fill = country)) +
+  geom_bar(stat = "identity") +
+  coord_polar("y") + 
+  labs(
+    title = "Number of customers by country",
+    x = "Country",
+    y = "Customers"
+  )
+ggplot(data = country_metrics, aes(x = reorder(country, -customer_lifetime_value), 
+                                   y = customer_lifetime_value, 
+                                   color = country)) +
+  geom_point(stat = "identity") +
+  labs(
+    title = "Customer lifetime value by country",
+    x = "Country",
+    y = "Customer Lifetime Value"
+  ) + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+Ultimately , the whole point of these is to suggest the marketing team for the best decisions to take in future. From above visuals it is clear that customers from the USA has made most number of purchases, however , if we take customer lifetime value into consideration, Czech Republic customers have the most lifetime value. That means, customers from this country are worth investing onto. We see from previous query that Chinook has only 2 customers from Czech Republic but they have spent good amount of money. So it will help to keep good relationships with those customers, keeping them updated about new records, also USA,Canada and Brazil have the most number of customers although they dont have the most lifetime value. They can bring regular cash in to the store. 
+
+The other 15 customers are from 15 different countries. These customers are also adding good value in the income. 
+
+
+## Purchase Full Album or Tracks Only ?
+
+
+Management are currently considering changing their purchasing strategy to save money. The strategy they are considering is to purchase only the most popular tracks from each album from record companies, instead of purchasing every track from an album.
+
+We have been asked to find out what percentage of purchases are individual tracks versus whole albums. Management can use this data to understand the effect this decision might have on overall revenue.
+
+Write a query that categorizes each invoice as either an album purchase or not, and calculates the following summary statistics:
+
+    Number of invoices
+    Percentage of invoices
+
+The core aspect to the analysis is identifying if an invoice contains all the tracks from an album. We can do this by getting the list of tracks from an invoice and comparing it to the list of tracks from an album. We can find the album to compare the purchase to by looking up the album that one of the purchased tracks belongs to. It doesn't matter which track we pick, since if it's an album purchase, that album will be the same for all tracks. To compare two tables based on values, we can use the EXCEPT operator .
+
+
+```{r}
+albums_vs_tracks = '
+WITH invoice_first_track AS
+    (
+     SELECT
+         il.invoice_id invoice_id,
+         MIN(il.track_id) first_track_id
+     FROM invoice_line il
+     GROUP BY 1
+    )
+SELECT
+    album_purchase,
+    COUNT(invoice_id) number_of_invoices,
+    CAST(count(invoice_id) AS FLOAT) / (
+                                         SELECT COUNT(*) FROM invoice
+                                      ) percent
+FROM
+    (
+    SELECT
+        ifs.*,
+        CASE
+            WHEN
+                 (
+                  SELECT t.track_id FROM track t
+                  WHERE t.album_id = (
+                                      SELECT t2.album_id FROM track t2
+                                      WHERE t2.track_id = ifs.first_track_id
+                                     ) 
+                  EXCEPT 
+                  SELECT il2.track_id FROM invoice_line il2
+                  WHERE il2.invoice_id = ifs.invoice_id
+                 ) IS NULL
+             AND
+                 (
+                  SELECT il2.track_id FROM invoice_line il2
+                  WHERE il2.invoice_id = ifs.invoice_id
+                  EXCEPT 
+                  SELECT t.track_id FROM track t
+                  WHERE t.album_id = (
+                                      SELECT t2.album_id FROM track t2
+                                      WHERE t2.track_id = ifs.first_track_id
+                                     ) 
+                 ) IS NULL
+             THEN "yes"
+             ELSE "no"
+         END AS "album_purchase"
+     FROM invoice_first_track ifs
+    )
+GROUP BY album_purchase ;
+'
+
+```
+
+
+This whole query will return the analysis which shows how many invoices reflect the album vs individual tracks sell.
+
+
+```{r}
+run_query(albums_vs_tracks)
+```
+
+
+
+Almost 20% invoices are accounted for album sells. Most of the invoices have been accounted for individual tracks. From this record, we can recommend Chinook store to not buy full albums from the record labels. 
+
