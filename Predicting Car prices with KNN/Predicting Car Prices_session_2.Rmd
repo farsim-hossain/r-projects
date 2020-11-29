@@ -1,0 +1,449 @@
+---
+title: "Predicting Car Prices"
+author: Mahmood Hossain Farsim
+output: html_notebook
+  toc : true
+---
+
+# Introduction
+
+We will explore a dataset and use KNN model to predict the car prices. 
+
+This data set consists of three types of entities: (a) the specification of an auto in terms of various characteristics, (b) its assigned insurance risk rating, (c) its normalized losses in use as compared to other cars. The second rating corresponds to the degree to which the auto is more risky than its price indicates. Cars are initially assigned a risk factor symbol associated with its price. Then, if it is more risky (or less), this symbol is adjusted by moving it up (or down) the scale. Actuarians call this process "symboling". A value of +3 indicates that the auto is risky, -3 that it is probably pretty safe.
+
+# Attribute Information 
+
+Attribute Information:
+
+Attribute: Attribute Range
+
+1. symboling: -3, -2, -1, 0, 1, 2, 3.
+2. normalized-losses: continuous from 65 to 256.
+3. make:
+alfa-romero, audi, bmw, chevrolet, dodge, honda,
+isuzu, jaguar, mazda, mercedes-benz, mercury,
+mitsubishi, nissan, peugot, plymouth, porsche,
+renault, saab, subaru, toyota, volkswagen, volvo
+
+4. fuel-type: diesel, gas.
+5. aspiration: std, turbo.
+6. num-of-doors: four, two.
+7. body-style: hardtop, wagon, sedan, hatchback, convertible.
+8. drive-wheels: 4wd, fwd, rwd.
+9. engine-location: front, rear.
+10. wheel-base: continuous from 86.6 120.9.
+11. length: continuous from 141.1 to 208.1.
+12. width: continuous from 60.3 to 72.3.
+13. height: continuous from 47.8 to 59.8.
+14. curb-weight: continuous from 1488 to 4066.
+15. engine-type: dohc, dohcv, l, ohc, ohcf, ohcv, rotor.
+16. num-of-cylinders: eight, five, four, six, three, twelve, two.
+17. engine-size: continuous from 61 to 326.
+18. fuel-system: 1bbl, 2bbl, 4bbl, idi, mfi, mpfi, spdi, spfi.
+19. bore: continuous from 2.54 to 3.94.
+20. stroke: continuous from 2.07 to 4.17.
+21. compression-ratio: continuous from 7 to 23.
+22. horsepower: continuous from 48 to 288.
+23. peak-rpm: continuous from 4150 to 6600.
+24. city-mpg: continuous from 13 to 49.
+25. highway-mpg: continuous from 16 to 54.
+26. price: continuous from 5118 to 45400.
+
+# Data Exploration 
+```{r}
+library(tidyverse)
+
+cars <- read.csv("imports-85.data")
+head(cars)
+```
+
+As we can see, the column names are showing like X3, X etc. But we need proper naming for the columns. Thats why we will change the column names.
+
+```{r}
+colnames(cars) <- c(
+  "symboling",
+  "normalized_losses",
+  "make",
+  "fuel_type",
+  "aspiration",
+  "num_doors",
+  "body_style",
+  "drive_wheels",
+  "engine_location",
+  "wheel_base",
+  "length",
+  "width",
+  "height",
+  "curb_weight",
+  "engine_type",
+  "num_cylinders",
+  "engine_size",
+  "fuel_system",
+  "bore",
+  "stroke",
+  "compression_ratio",
+  "horsepower",
+  "peak_rpm",
+  "city_mpg",
+  "highway_mpg",
+  "price"
+)
+
+# We will remove the non-numercial columns and filter out the missing values 
+
+cars <- cars %>% 
+  select(
+    symboling, wheel_base, length, width, height, curb_weight,
+    engine_size, bore, stroke, compression_ratio, horsepower, 
+    peak_rpm, city_mpg, highway_mpg, price
+  ) %>% 
+  filter(
+    stroke != "?",
+    bore != "?",
+    horsepower != "?",
+    peak_rpm != "?",
+    price != "?"
+  ) %>% 
+  mutate(
+    stroke = as.numeric(stroke),
+    bore = as.numeric(bore),
+    horsepower = as.numeric(horsepower),
+    peak_rpm = as.numeric(peak_rpm),
+    price = as.numeric(price)
+  )
+head(cars)
+map(cars,typeof) # Viewing all the column types 
+```
+
+# Examining relationships between predictors 
+
+Now that we have a tidy dataset, we should look at how each of them are associated with the outcome column price.  Our goal in looking at these associations is to see how useful each feature might be to predicting price. Perhaps low horsepower is associated with low price and high with high. Other features might have the opposite relationship, or even no distinguishable relationship at all! It's important that we actually visualize this and confirm it for ourselves in case we need to justify our models later.
+
+**caret** provides a convenient function for us to look at all of these relationships: the featurePlot() function.
+
+we can just provide the whole dataset, and caret will automatically create scatterplots for each feature against price. This set of scatterplots has a special name: a lattice plot.
+
+**Lets see how each of the columns in the dataset is related to the price column**
+
+```{r}
+library(caret)
+featurePlot(cars,cars$price)
+```
+
+WOW ! What a mess ! Still we can see a somewhat positive relationship between horsepower and price. Another thing we can see that there are two appearant groups or clusters in some plots. 
+City MPG and highway MPG look positive too, but there is no obvious relationship between height and price. 
+
+We will see the how many cars get sold in particular price ranges. 
+```{r}
+ggplot(cars, aes(x = price)) +
+  geom_histogram(color = "red") +
+  labs(
+    title = "Distribution of prices in cars dataset",
+    x = "Price",
+    y = "Frequency"
+  )
+```
+
+It looks like there's a reasonably even distirbution of the prices in the dataset, so there are no outliers.  There are 2 cars whose price is zero, so this might be suspect. This only represents 1% of the entire dataset, so it shouldn't have too much impact on predictions, especially if we use a high number of neighbors.
+
+
+# Setting up the train-test split
+
+The next step we need to take is to split the dataset into training and test sets. It is generally good to allocate most of the data to the training set. 
+
+```{r}
+split_indices <- createDataPartition(cars$price, p = 0.8,  list = FALSE)
+train_cars <- cars[split_indices,]
+test_cars <- cars[-split_indices,]
+```
+
+# Cross - validation and hyperparameter optimization 
+
+About k-fold cross-validation, and we just need to decide how many folds we want to use. K-nearest neighbors is convenient for us because we only have to deal with one hyperparameter, but that shouldn't stop us from choosing a wide range of values for k. caret does all of the testing for us behind the scenes.
+
+```{r}
+# 5-fold cross-validation 
+five_fold_control <- trainControl(method = "cv", number = 5)
+tuning_grid <- expand.grid(k = 1:20)
+```
+
+# Experimenting with different models 
+
+With cross-validation and hyperparameter optimization in place, we are assured that each of the models is assessed in the same way, which enables us to compare them. Our ultimate goal with this guided project is to produce a model with the best possible predictions of car prices from the features we have. However, we don't know ahead of time which combination of features will give us this model, so we'll need to do a little bit of **experimentation**.
+
+There's no set way to approach this experimentation, One possible avenue is to start with all of the features in the dataset and see how this full model performs. Then, we could iteratively remove features to see if this improves or worsens the test error. Alternatively, we could iterate through all the features and see how well a single feature performs in prediction. After choosing the best one, we could add a second one that best improves performance, and so on.
+
+The point is that choosing a final model resembles more an art than a science.
+
+We could theoretically check all of the possible combinations of features since the number of feature columns is small. However, we wouldn't be able to do this with even moderately larger datasets. Furthermore, you may come to a point where extra features only improve prediction ability by tiny amounts, so we'll have to decide where to stop.
+
+After some experimentation, lets pick one or a few models to keep as our "candidate" models. Use our lattice plot from earlier to help guide your decision.
+
+```{r}
+
+set.seed(1)
+# Creating a model based on all the features
+full_model <- train(price ~ .,
+                    data = train_cars,
+                    method = "knn",
+                    trControl = five_fold_control,
+                    tuneGrid = tuning_grid,
+                    preProcess = c("center", "scale"))
+
+full_model
+
+
+
+
+
+```
+
+**This is the result of using all the features in our model**. But that doesnt necessarily mean that it would be a great idea to use all the features to explain the price. The issue of bias variance tradeoff is there. Anyway, using all the features, **we noodled with the tuning grid with different values at least 50 times. We used 5 folds, 3, 17, 16, 13, etc number of folds. The best situation happens when we have larger r squared values along with lowest RMSE, which happened when we used 1:20 grid search.** we have found the least RMSE with better r-squared while using around 5 neighbours or K = 5 . We have to cross check with different number of features to determine which gives us the least RMSE. 
+
+Lets check with two features. 
+
+```{r}
+set.seed(1)
+two_feat_model <- train(price ~ city_mpg + highway_mpg,
+                    data = train_cars,
+                    method = "knn",
+                    trControl = five_fold_control,
+                    tuneGrid = tuning_grid,
+                    preProcess = c("center", "scale"))
+
+two_feat_model
+```
+
+**BAD** RMSE 47 and r squared 0.26
+
+What about three features ?
+
+```{r}
+set.seed(1)
+three_feat_model <- train(price ~ city_mpg + highway_mpg + stroke,
+                    data = train_cars,
+                    method = "knn",
+                    trControl = five_fold_control,
+                    tuneGrid = tuning_grid,
+                    preProcess = c("center", "scale"))
+
+three_feat_model
+```
+
+Nah. Using three features is making it worse. May be some other features ? 
+
+```{r}
+set.seed(1)
+two_feat_model_2 <- train(price ~ horsepower + city_mpg,
+                    data = train_cars,
+                    method = "knn",
+                    trControl = five_fold_control,
+                    tuneGrid = tuning_grid,
+                    preProcess = c("center", "scale"))
+
+two_feat_model_2
+```
+
+Not working. Lets try with another three different features
+
+```{r}
+set.seed(1)
+two_feat_model_3 <- train(price ~ horsepower + engine_size,
+                    data = train_cars,
+                    method = "knn",
+                    trControl = five_fold_control,
+                    tuneGrid = tuning_grid,
+                    preProcess = c("center", "scale"))
+
+two_feat_model_3
+```
+
+
+
+Lets noodle some more. 
+
+```{r}
+set.seed(1)
+three_feat_model_3 <- train(price ~ horsepower + engine_size + highway_mpg,
+                    data = train_cars,
+                    method = "knn",
+                    trControl = five_fold_control,
+                    tuneGrid = tuning_grid,
+                    preProcess = c("center", "scale"))
+
+three_feat_model_3
+```
+
+**Not that much !**
+
+```{r}
+
+set.seed(1)
+three_feat_model_4 <- train(price ~ horsepower + engine_size + curb_weight,
+                    data = train_cars,
+                    method = "knn",
+                    trControl = five_fold_control,
+                    tuneGrid = tuning_grid,
+                    preProcess = c("center", "scale"))
+
+three_feat_model_4
+```
+
+RMSE 43 
+
+```{r}
+set.seed(1)
+two_feat_model_4 <- train(price ~ engine_size + curb_weight,
+                    data = train_cars,
+                    method = "knn",
+                    trControl = five_fold_control,
+                    tuneGrid = tuning_grid,
+                    preProcess = c("center", "scale"))
+two_feat_model_4
+```
+
+RMSE = 41 
+
+But how about a single predictor ? 
+
+```{r}
+set.seed(1)
+one_feat_model <- train(price ~ curb_weight ,
+                    data = train_cars,
+                    method = "knn",
+                    trControl = five_fold_control,
+                    tuneGrid = tuning_grid,
+                    preProcess = c("center", "scale"))
+
+one_feat_model
+```
+
+Using only one feature, we got RMSE = 40. I dont know if we are going to the right direction or not. A lot of experimentation needed to find out. 
+
+Lets give two feature model another shot.
+
+```{r}
+set.seed(1)
+
+two_feat_model_5 <- train(price ~ horsepower + curb_weight,
+                    data = train_cars,
+                    method = "knn",
+                    trControl = five_fold_control,
+                    tuneGrid = tuning_grid,
+                    preProcess = c("center", "scale"))
+
+two_feat_model_5
+```
+RMSE = 38.55
+
+I want to use **10 fold** cross validation at this time using these two predictors. 
+
+```{r}
+set.seed(1)
+ten_fold_control <- trainControl(method = "cv", number = 10)
+two_feat_model_6 <- train(price ~ horsepower + curb_weight,
+                    data = train_cars,
+                    method = "knn",
+                    trControl = ten_fold_control,
+                    tuneGrid = tuning_grid,
+                    preProcess = c("center", "scale"))
+
+two_feat_model_6
+
+
+```
+
+**Probably the best result so far**. RMSE = 38 and explains almost 48% of the data (r-sq)
+
+# Final model evaluation
+
+We will now predict against the test data using our knn models.
+
+```{r}
+full_feat_prediction <- predict(full_model,  newdata = test_cars)
+two_feat_prediction <- predict(two_feat_model,  newdata = test_cars)
+two_feat_prediction_2 <- predict(two_feat_model_2,  newdata = test_cars)
+two_feat_prediction_3 <- predict(two_feat_model_3,  newdata = test_cars)
+two_feat_prediction_4 <- predict(two_feat_model_4,  newdata = test_cars)
+two_feat_prediction_5 <- predict(two_feat_model_5,  newdata = test_cars)
+two_feat_prediction_6 <- predict(two_feat_model_6,  newdata = test_cars)
+
+three_feat_prediction <- predict(three_feat_model,  newdata = test_cars)
+three_feat_prediction_2 <- predict(three_feat_model_2,  newdata = test_cars)
+three_feat_prediction_3 <- predict(three_feat_model_3,  newdata = test_cars)
+three_feat_prediction_4 <- predict(three_feat_model_4,  newdata = test_cars)
+
+one_feat_prediction <- predict(one_feat_model, newdata =  test_cars)
+
+postResample(pred = full_feat_prediction, obs = test_cars$price)
+
+
+
+```
+
+Using our full featured model, we predicted our test data and found a better **r-squared** value after using tuning grid = 1:20, than we previously got **using other number of folds in our knn model**. That means using the tuning grid = 1:20 is a better choice. 
+
+Now lets not print out all the postresamples this way, lets come back to post resample later and first lets make a table where we can see the summerized information about all the different models and predictions. 
+
+```{r}
+test_cars <- test_cars %>% 
+  mutate(full_feat_prediction,
+         one_feat_prediction,
+         two_feat_prediction,
+         two_feat_prediction_2,
+         two_feat_prediction_3,
+         two_feat_prediction_4,
+         two_feat_prediction_5,
+         two_feat_prediction_6,
+         three_feat_prediction,
+         three_feat_prediction_2,
+         three_feat_prediction_3,
+         three_feat_prediction_4) 
+
+test_cars
+```
+
+```{r}
+tidy_test_cars <- test_cars %>% 
+  mutate(full_sq_error = (price - full_feat_prediction)^2,
+         one_feat_sq_error = (price - one_feat_prediction)^2,
+         two_feat_sq_error = (price - two_feat_prediction)^2,
+         two_feat_sq_error_2 = (price - two_feat_prediction_2)^2,
+         two_feat_sq_error_3 = (price - two_feat_prediction_3)^2,
+         two_feat_sq_error_4 = (price - two_feat_prediction_4)^2,
+         two_feat_sq_error_5 = (price - two_feat_prediction_5)^2,
+         two_feat_sq_error_6 = (price - two_feat_prediction_6)^2,
+         three_feat_sq_error = (price - three_feat_prediction)^2,
+         three_feat_sq_error_2 = (price - three_feat_prediction_2)^2,
+         three_feat_sq_error_3 = (price - three_feat_prediction_3)^2,
+         three_feat_sq_error_4 = (price - three_feat_prediction_4)^2) %>%
+  pivot_longer(
+    cols = 
+      full_sq_error:three_feat_sq_error_4,
+    names_to = "model_name",
+    values_to = "sq_error")
+    
+
+tidy_test_cars
+```
+
+
+Lets summarize the model and predictions 
+
+```{r}
+pred_summary <- tidy_test_cars %>% 
+  group_by(model_name) %>%
+  summarise(rmse = sqrt(mean(sq_error)))
+pred_summary <- pred_summary %>% arrange(rmse)
+pred_summary
+
+```
+
+
+
+# Conclusion 
+
+From above summary , we can conclude that using three features : **horse power, engine size and highwy mpg** gives us the best model to predict the test data where we got the **lowest** rmse = 31.01. However, while noodling around the tuning grid, folds and features, sometimes we had different feeling that some other model works best. I hope if we tweak some more, for example with 10 folds, we might achieve even lower rmse. But one thing is for sure, we have to keep **noodling !**  
+
+
+
